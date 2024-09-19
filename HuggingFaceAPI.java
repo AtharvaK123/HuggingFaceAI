@@ -5,8 +5,10 @@ import java.net.http.HttpResponse;
 
 public class HuggingFaceAPI {
 
-    private static final String API_URL = "https://api-inference.huggingface.co/models/gpt2";
+    private static final String API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-Nemo-Instruct-2407";
     private static final String API_TOKEN = "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"; // Replace with your new token
+    private static final int MAX_RETRIES = 5;
+    private static final int RETRY_WAIT_TIME_MS = 20000; // 20 seconds
 
     public static void main(String[] args) {
         try {
@@ -16,12 +18,10 @@ public class HuggingFaceAPI {
                 throw new IllegalArgumentException("Hugging Face API Token is not set.");
             }
 
-            String inputText = "What are some good coding websites?";
-
+            String inputText = "Quadratic Formula?";
             HttpClient client = HttpClient.newHttpClient();
 
             String jsonInput = "{\"inputs\": \"" + inputText + "\"}";
-
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(API_URL))
                 .header("Authorization", "Bearer " + apiToken)
@@ -29,18 +29,45 @@ public class HuggingFaceAPI {
                 .POST(HttpRequest.BodyPublishers.ofString(jsonInput))
                 .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            // Retry logic in case the model is loading
+            for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
-            if (response.statusCode() != 200) {
-                throw new RuntimeException("Error: " + response.body());
+                if (response.statusCode() == 200) {
+                    String responseBody = response.body();
+                    // Process and simplify the output
+                    String simplifiedText = simplifyOutput(responseBody);
+                    System.out.println("Simplified Output: " + simplifiedText);
+                    break;
+                } else if (response.body().contains("is currently loading")) {
+                    System.out.println("Model is still loading, retrying in " + (RETRY_WAIT_TIME_MS / 1000) + " seconds...");
+                    Thread.sleep(RETRY_WAIT_TIME_MS);
+                } else {
+                    throw new RuntimeException("Error: " + response.body());
+                }
             }
-
-            String responseBody = response.body();
-            System.out.println("Response Body: " + responseBody);
 
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    // Method to simplify the output by removing special characters and keeping only legible words/numbers
+    private static String simplifyOutput(String responseBody) {
+        // Step 1: Extract the generated text from the API response
+        String generatedText = extractGeneratedText(responseBody);
+
+        // Step 2: Remove unnecessary special characters, keeping only letters, numbers, and basic punctuation
+        if (generatedText != null) {
+            // Replace newlines, tabs, etc. with spaces
+            generatedText = generatedText.replace("\\n", " ").replace("\\t", " ").replace("\\r", " ").trim();
+            // Remove all special characters except letters, digits, basic punctuation
+            generatedText = generatedText.replaceAll("[^a-zA-Z0-9.,!?+\\-*/= ]", "");
+            // Normalize multiple spaces into a single space
+            generatedText = generatedText.replaceAll("\\s+", " ");
+        }
+
+        return generatedText != null ? generatedText : "No legible output found.";
     }
 
     // Method to extract the "generated_text" from the API response
@@ -55,25 +82,5 @@ public class HuggingFaceAPI {
             }
         }
         return null;
-    }
-
-    // Method to extract a simple math answer from the generated text
-    private static String extractSimpleMathAnswer(String generatedText) {
-        // Replace newlines and special characters with spaces
-        generatedText = generatedText.replace("\\n", " ").replaceAll("[^0-9+\\-*/= ]", "").trim();
-
-        // Split the text into individual parts and only consider simple math expressions
-        String[] parts = generatedText.split(" ");
-        String bestExpression = "";
-
-        for (String part : parts) {
-            // Include only simple math expressions (e.g., "1 + 1")
-            if (part.matches("[0-9]+[+\\-*/][0-9]+")) {
-                bestExpression = part; // Keep the first valid expression we encounter
-                break; // Exit early once we find a valid expression
-            }
-        }
-
-        return bestExpression.isEmpty() ? "Answer not found." : bestExpression;
     }
 }
